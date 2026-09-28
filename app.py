@@ -8,6 +8,7 @@ from tools import (
     get_request,
     search_requests,
     get_summary,
+    WEB_SEARCH_TOOL,
 )
 
 
@@ -40,84 +41,88 @@ client = OpenAI(
 
 
 # --------------------------------------------------
-# System instructions
+# Instructions
 # --------------------------------------------------
 
 SYSTEM_INSTRUCTIONS = """
 You are a Citizen Service Assistant.
 
-Your job is to help users understand citizen service requests.
+You have access to two types of tools:
+
+1. Local citizen-service tools
+2. Web search
+
+Use the local tools when the user asks about
+citizen service requests.
+
+Use web search when the user asks for current,
+recent, or publicly available information.
 
 Rules:
 
-1. Use tools when factual request information is required.
-2. Never invent request information.
-3. If a request ID is provided, use the get_request tool.
-4. If the user asks about a category, use the search_requests tool.
-5. If the user asks for overall statistics, use the get_summary tool.
-6. The application is read-only.
-7. Never claim that a request was modified.
-8. If information is unavailable, clearly say so.
-9. Keep responses concise and professional.
+- Never invent citizen request information.
+- Use get_request when a request ID is provided.
+- Use search_requests for category searches.
+- Use get_summary for overall statistics.
+- Use web search for current information.
+- Clearly distinguish local application data from
+  information found on the web.
+- The application is read-only.
+- Never claim that a citizen request was modified.
+- Keep answers concise and professional.
 """
 
 
 # --------------------------------------------------
-# Tool definitions
+# Local function tools
 # --------------------------------------------------
 
-TOOLS = [
+LOCAL_TOOLS = [
     {
         "type": "function",
-        "function": {
-            "name": "get_request",
-            "description": "Retrieve a citizen service request by request ID.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "request_id": {
-                        "type": "string",
-                        "description": "The citizen service request ID."
-                    }
-                },
-                "required": ["request_id"]
-            }
+        "name": "get_request",
+        "description": "Retrieve a citizen service request by request ID.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "request_id": {
+                    "type": "string",
+                    "description": "The citizen service request ID."
+                }
+            },
+            "required": ["request_id"]
         }
     },
     {
         "type": "function",
-        "function": {
-            "name": "search_requests",
-            "description": "Find citizen service requests by category.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "category": {
-                        "type": "string",
-                        "description": "The request category."
-                    }
-                },
-                "required": ["category"]
-            }
+        "name": "search_requests",
+        "description": "Find citizen service requests by category.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "category": {
+                    "type": "string",
+                    "description": "The request category."
+                }
+            },
+            "required": ["category"]
         }
     },
     {
         "type": "function",
-        "function": {
-            "name": "get_summary",
-            "description": "Get overall citizen service request statistics.",
-            "parameters": {
-                "type": "object",
-                "properties": {},
-                "required": []
-            }
+        "name": "get_summary",
+        "description": "Get overall citizen service request statistics.",
+        "parameters": {
+            "type": "object",
+            "properties": {},
+            "required": []
         }
     }
 ]
 
 
 # --------------------------------------------------
-# Tool execution
+# Execute local tools
 # --------------------------------------------------
 
 def execute_tool(name, arguments):
@@ -137,70 +142,73 @@ def execute_tool(name, arguments):
 
 
 # --------------------------------------------------
-# AI application
+# Ask GPT-5
 # --------------------------------------------------
 
 def ask_agent(user_message: str):
 
-    messages = [
-        {
-            "role": "system",
-            "content": SYSTEM_INSTRUCTIONS
-        },
-        {
-            "role": "user",
-            "content": user_message
-        }
-    ]
-
-    response = client.chat.completions.create(
+    response = client.responses.create(
         model=MODEL,
-        messages=messages,
-        tools=TOOLS,
-        tool_choice="auto",
+
+        instructions=SYSTEM_INSTRUCTIONS,
+
+        input=user_message,
+
+        tools=[
+            *LOCAL_TOOLS,
+            WEB_SEARCH_TOOL,
+        ],
     )
 
-    message = response.choices[0].message
+    # Process local function calls
+    while True:
 
-    # No tool required
-    if not message.tool_calls:
-        return message.content
+        function_calls = [
+            item
+            for item in response.output
+            if item.type == "function_call"
+        ]
 
-    messages.append(message)
+        if not function_calls:
+            break
 
-    # Execute requested tools
-    for tool_call in message.tool_calls:
+        tool_outputs = []
 
-        tool_name = tool_call.function.name
+        for call in function_calls:
 
-        arguments = json.loads(
-            tool_call.function.arguments
+            arguments = json.loads(
+                call.arguments
+            )
+
+            result = execute_tool(
+                call.name,
+                arguments
+            )
+
+            tool_outputs.append(
+                {
+                    "type": "function_call_output",
+                    "call_id": call.call_id,
+                    "output": json.dumps(result)
+                }
+            )
+
+        response = client.responses.create(
+            model=MODEL,
+            instructions=SYSTEM_INSTRUCTIONS,
+            previous_response_id=response.id,
+            input=tool_outputs,
+            tools=[
+                *LOCAL_TOOLS,
+                WEB_SEARCH_TOOL,
+            ],
         )
 
-        result = execute_tool(
-            tool_name,
-            arguments
-        )
-
-        messages.append(
-            {
-                "role": "tool",
-                "tool_call_id": tool_call.id,
-                "content": json.dumps(result)
-            }
-        )
-
-    # Ask the model to generate the final answer
-    final_response = client.chat.completions.create(
-        model=MODEL,
-        messages=messages,
-    )
-
-    return final_response.choices[0].message.content
+    return response.output_text
 
 
 # --------------------------------------------------
-# Command-line application
+# Main application
 # --------------------------------------------------
 
 def main():
@@ -209,6 +217,7 @@ def main():
     print("======================================")
     print(" Citizen Service Assistant")
     print(" GPT-5 + Microsoft Foundry")
+    print(" Local Tools + Web Search")
     print("======================================")
     print()
     print("Type 'exit' to quit.")

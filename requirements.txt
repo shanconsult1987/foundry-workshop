@@ -1,3 +1,4 @@
 openai
 azure-identity
+foundry-local-sdk-winml
 pytest

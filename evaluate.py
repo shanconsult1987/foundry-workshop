@@ -18,6 +18,10 @@ TEST_CASES = [
         "question": "How many requests are resolved?",
         "expected": ["1"],
     },
+    {
+        "question": "What is the status of request 9999?",
+        "expected": ["not found"],
+    },
 ]
 
 

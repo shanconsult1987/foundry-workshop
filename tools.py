@@ -54,3 +54,8 @@ def get_summary():
         "in_progress": in_progress,
         "resolved": resolved,
     }
+
+# Microsoft Foundry hosted web search tool
+WEB_SEARCH_TOOL = {
+    "type": "web_search"
+}
